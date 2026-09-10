@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+# BASH_SOURCE has no element when this script is piped directly into Bash.
+set -eo pipefail
+SCRIPT_FILE="${BASH_SOURCE[0]-}"
+set -u
 
 APP_ID="s3-console-handler.desktop"
 DEFAULT_REGION="eu-west-1"
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_HANDLER="$SCRIPT_DIR/s3-console"
-SOURCE_EXTENSION="$SCRIPT_DIR/chromium-extension"
+RAW_BASE_URL="${S3_CONSOLE_RAW_BASE_URL:-https://raw.githubusercontent.com/NeuroTo/s3-console-url-handler/main}"
+SCRIPT_DIR=""
+DOWNLOAD_DIR=""
+if [[ -n "$SCRIPT_FILE" && -f "$SCRIPT_FILE" ]]; then
+    SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_FILE")" && pwd)"
+fi
+SOURCE_HANDLER="${SCRIPT_DIR:+$SCRIPT_DIR/}s3-console"
+SOURCE_EXTENSION="${SCRIPT_DIR:+$SCRIPT_DIR/}chromium-extension"
 BIN_DIR="${HOME:?HOME is not set}/.local/bin"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APPLICATIONS_DIR="$DATA_HOME/applications"
@@ -39,6 +47,52 @@ desktop_escape() {
     printf '%s' "$value"
 }
 
+cleanup_downloads() {
+    if [[ -z "$DOWNLOAD_DIR" ]]; then
+        return
+    fi
+
+    rm -f \
+        "$DOWNLOAD_DIR/s3-console" \
+        "$DOWNLOAD_DIR/chromium-extension/manifest.json" \
+        "$DOWNLOAD_DIR/chromium-extension/background.js"
+    rmdir "$DOWNLOAD_DIR/chromium-extension" 2>/dev/null || true
+    rmdir "$DOWNLOAD_DIR" 2>/dev/null || true
+}
+
+prepare_sources() {
+    if [[ -n "$SCRIPT_DIR" ]]; then
+        if [[ ! -f "$SOURCE_HANDLER" ]]; then
+            printf 'Error: application file not found: %s\n' "$SOURCE_HANDLER" >&2
+            exit 1
+        fi
+        if [[ ! -f "$SOURCE_EXTENSION/manifest.json" \
+            || ! -f "$SOURCE_EXTENSION/background.js" ]]; then
+            printf 'Error: Chromium extension files are incomplete\n' >&2
+            exit 1
+        fi
+        return
+    fi
+
+    require_command curl
+    require_command mktemp
+    DOWNLOAD_DIR="$(mktemp -d)"
+    SOURCE_HANDLER="$DOWNLOAD_DIR/s3-console"
+    SOURCE_EXTENSION="$DOWNLOAD_DIR/chromium-extension"
+    mkdir -p "$SOURCE_EXTENSION"
+    trap cleanup_downloads EXIT
+
+    curl --fail --location --silent --show-error \
+        "$RAW_BASE_URL/s3-console" \
+        --output "$SOURCE_HANDLER"
+    curl --fail --location --silent --show-error \
+        "$RAW_BASE_URL/chromium-extension/manifest.json" \
+        --output "$SOURCE_EXTENSION/manifest.json"
+    curl --fail --location --silent --show-error \
+        "$RAW_BASE_URL/chromium-extension/background.js" \
+        --output "$SOURCE_EXTENSION/background.js"
+}
+
 install_handler() {
     local region="$DEFAULT_REGION"
 
@@ -68,17 +122,7 @@ install_handler() {
     require_command python3
     require_command xdg-mime
     require_command xdg-open
-
-    if [[ ! -f "$SOURCE_HANDLER" ]]; then
-        printf 'Error: application file not found: %s\n' "$SOURCE_HANDLER" >&2
-        exit 1
-    fi
-    if [[ ! -f "$SOURCE_EXTENSION/manifest.json" \
-        || ! -f "$SOURCE_EXTENSION/background.js" \
-        || ! -f "$SOURCE_EXTENSION/config.js" ]]; then
-        printf 'Error: Chromium extension files are incomplete\n' >&2
-        exit 1
-    fi
+    prepare_sources
 
     mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR" "$EXTENSION_DIR"
     install -m 0755 "$SOURCE_HANDLER" "$HANDLER_PATH"
