@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "S3 AWS Console",
+  "description": "Open S3 URIs in the AWS S3 web console with the s3 keyword.",
+  "version": "1.0.0",
+  "omnibox": {
+    "keyword": "s3"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

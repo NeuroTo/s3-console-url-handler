@@ -6,9 +6,11 @@ APP_ID="s3-console-handler.desktop"
 DEFAULT_REGION="eu-west-1"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_HANDLER="$SCRIPT_DIR/s3-console"
+SOURCE_EXTENSION="$SCRIPT_DIR/chromium-extension"
 BIN_DIR="${HOME:?HOME is not set}/.local/bin"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 APPLICATIONS_DIR="$DATA_HOME/applications"
+EXTENSION_DIR="$DATA_HOME/s3-console/chromium-extension"
 HANDLER_PATH="$BIN_DIR/s3-console"
 DESKTOP_PATH="$APPLICATIONS_DIR/$APP_ID"
 
@@ -18,7 +20,7 @@ Usage:
   ./install.sh install [--region REGION]
   ./install.sh uninstall
 
-Installs or removes the per-user s3:// AWS Console protocol handler.
+Installs or removes the Firefox handler and Chromium extension files.
 The default region is $DEFAULT_REGION.
 EOF
 }
@@ -71,9 +73,19 @@ install_handler() {
         printf 'Error: application file not found: %s\n' "$SOURCE_HANDLER" >&2
         exit 1
     fi
+    if [[ ! -f "$SOURCE_EXTENSION/manifest.json" \
+        || ! -f "$SOURCE_EXTENSION/background.js" \
+        || ! -f "$SOURCE_EXTENSION/config.js" ]]; then
+        printf 'Error: Chromium extension files are incomplete\n' >&2
+        exit 1
+    fi
 
-    mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR"
+    mkdir -p "$BIN_DIR" "$APPLICATIONS_DIR" "$EXTENSION_DIR"
     install -m 0755 "$SOURCE_HANDLER" "$HANDLER_PATH"
+    install -m 0644 "$SOURCE_EXTENSION/manifest.json" "$EXTENSION_DIR/manifest.json"
+    install -m 0644 "$SOURCE_EXTENSION/background.js" "$EXTENSION_DIR/background.js"
+    printf 'globalThis.S3_CONSOLE_REGION = "%s";\n' "$region" \
+        >"$EXTENSION_DIR/config.js"
 
     local escaped_handler
     escaped_handler="$(desktop_escape "$HANDLER_PATH")"
@@ -95,6 +107,10 @@ EOF
 
     printf 'Installed s3:// handler for region %s.\n' "$region"
     printf 'Test it with: s3://example-bucket/example/path/\n'
+    printf '\nChromium requires one manual step:\n'
+    printf '  1. Open chrome://extensions and enable Developer mode.\n'
+    printf '  2. Choose "Load unpacked" and select:\n     %s\n' "$EXTENSION_DIR"
+    printf 'Then enter: s3 s3://example-bucket/example/path/\n'
 }
 
 remove_mime_associations() {
@@ -145,6 +161,12 @@ uninstall_handler() {
 
     remove_mime_associations
     rm -f "$DESKTOP_PATH" "$HANDLER_PATH"
+    rm -f \
+        "$EXTENSION_DIR/manifest.json" \
+        "$EXTENSION_DIR/background.js" \
+        "$EXTENSION_DIR/config.js"
+    rmdir "$EXTENSION_DIR" 2>/dev/null || true
+    rmdir "$(dirname "$EXTENSION_DIR")" 2>/dev/null || true
 
     if command -v update-desktop-database >/dev/null 2>&1 \
         && [[ -d "$APPLICATIONS_DIR" ]]; then
@@ -152,6 +174,7 @@ uninstall_handler() {
     fi
 
     printf 'Uninstalled the s3:// handler.\n'
+    printf 'If Chromium still lists the extension, remove it at chrome://extensions.\n'
 }
 
 command="${1:-install}"
